@@ -59,7 +59,7 @@ defmodule FollowerMaze.Reception do
   defp serve(socket, reception) do
     {:ok, packet} = :gen_tcp.recv(socket, 0)
     identity = Event.Identity.parse(String.trim(packet))
-    :ok = GenServer.cast(FollowerMaze.Dispatcher, {:register, identity, socket})
+    :ets.insert(:clients, {identity.user_id, socket})
     Logger.info(~s(#{identity.user_id} #{String.trim(packet)}))
   end
 end

@@ -3,6 +3,8 @@ defmodule FollowerMaze.Supervisor do
 
   @impl true
   def start(_type, _args) do
+    :ets.new(:followers, [:set, :public, :named_table])
+    :ets.new(:clients, [:set, :public, :named_table])
     queue_config = Application.get_env(:follower_maze, :queue)
 
     server_config =
@@ -14,7 +16,6 @@ defmodule FollowerMaze.Supervisor do
       {Task.Supervisor, name: FollowerMaze.Reception.TaskSupervisor},
       {FollowerMaze.Reception, Application.get_env(:follower_maze, :clients)},
       {Task.Supervisor, name: FollowerMaze.Dispatcher.TaskSupervisor},
-      {FollowerMaze.Dispatcher, []},
       {FollowerMaze.Queue.Supervisor, queue_config}
     ]
 
