@@ -12,70 +12,69 @@ defmodule FollowerMaze.Dispatcher do
   end
 
   @impl true
-  def init(opts), do: {:ok, %{clients: MapSet.new(), followers: %{}}}
+  def init(opts), do: {:ok, %{clients: %{}, followers: %{}}}
 
   @impl true
   def handle_cast({:register, identity, client}, state) do
-    Logger.info(~s(Processor registered user #{identity.user_id}))
-    {:noreply, %{state | clients: MapSet.put(state.clients, {identity.user_id, client})}}
+    Logger.info(~s(Dispatcher registered user #{identity.user_id}))
+    {:noreply, %{state | clients: Map.put(state.clients, identity.user_id, client)}}
   end
 
   @impl true
-  def handle_cast({:events, events}, %{followers: followers, clients: clients} = state) do
-    msg_map = clients |> Enum.map(&{elem(&1, 0), []}) |> Map.new()
-    {followers, msg_map} = Enum.reduce(events, {followers, msg_map}, &handle/2)
+  def handle_cast({:event, event}, %{followers: followers, clients: clients} = state) do
+    {new_followers, receivers} = handle(event, followers, clients)
 
-    Logger.info(~s(dispatching #{length(events)} events))
-    Enum.each(clients, fn {user_id, client} ->
-      msgs = Map.get(msg_map, user_id, [])
+    Logger.info(~s(dispatching event #{event.seq}))
+    msg = Event.render(event)
 
+    Enum.each(receivers, fn client ->
       Task.Supervisor.start_child(FollowerMaze.Reception.TaskSupervisor, fn ->
-        dispatch(client, Enum.reverse(msgs))
+        :gen_tcp.send(client, msg)
       end)
     end)
 
-    # GenServer.cast(FollowerMaze.Dispatcher, {:dispatch, payload})
-
-    {:noreply, %{state | followers: followers}}
+    {:noreply, %{state | followers: new_followers}}
   end
 
-  defp dispatch(client, msgs) do
-    Enum.each(msgs, fn msg ->
-      :gen_tcp.send(client, msg)
-    end)
+  defp handle(%Event.Follow{from_user: from, to_user: to} = _e, followers, clients) do
+    followers = Map.update(followers, from, MapSet.new([to]), &MapSet.put(&1, to))
+
+    receivers =
+      case Map.get(clients, to) do
+        nil -> []
+        any -> [any]
+      end
+
+    {followers, receivers}
   end
 
-  defp handle(%Event.Follow{from_user: from, to_user: to} = event, {fs, msg_map}) do
-    followers = Map.update(fs, from, MapSet.new([to]), &MapSet.put(&1, to))
-    msg = Event.render(event)
-    {followers, Map.update(msg_map, to, [msg], &[msg | &1])}
+  defp handle(%Event.Unfollow{from_user: from, to_user: to} = _e, followers, _clients) do
+    {Map.update(followers, from, MapSet.new(), &MapSet.delete(&1, to)), []}
   end
 
-  defp handle(%Event.Unfollow{from_user: from, to_user: to} = _e, {fs, msg_map}) do
-    {Map.update(fs, from, MapSet.new(), &MapSet.delete(&1, to)), msg_map}
+  defp handle(%Event.Broadcast{} = _e, followers, clients) do
+    {followers, Map.values(clients)}
   end
 
-  defp handle(%Event.Broadcast{} = event, {fs, msg_map}) do
-    msg = Event.render(event)
-    {fs, Enum.into(msg_map, %{}, fn {k, v} -> {k, [msg | v]} end)}
+  defp handle(%Event.PrivateMessage{to_user: to} = event, followers, clients) do
+    receivers =
+      case Map.get(clients, to) do
+        nil -> []
+        any -> [any]
+      end
+
+    {followers, receivers}
   end
 
-  defp handle(%Event.PrivateMessage{to_user: to} = event, {fs, msg_map}) do
-    msg = Event.render(event)
-    {fs, Map.update(msg_map, to, [msg], &[msg | &1])}
-  end
-
-  defp handle(%Event.StatusUpdate{from_user: from} = event, {fs, msg_map}) do
-    msg = Event.render(event)
-
-    msg_map =
-      Enum.reduce(msg_map, %{}, fn {k, msgs}, acc ->
-        case MapSet.member?(Map.get(fs, k, MapSet.new()), from) do
-          true -> Map.put(acc, k, [msg | msgs])
-          false -> Map.put(acc, k, msgs)
+  defp handle(%Event.StatusUpdate{from_user: from} = event, followers, clients) do
+    receivers =
+      Enum.reduce(clients, [], fn {user_id, client}, acc ->
+        case MapSet.member?(Map.get(followers, user_id, MapSet.new()), from) do
+          true -> [client | acc]
+          false -> acc
         end
       end)
 
-    {fs, msg_map}
+    {followers, receivers}
   end
 end

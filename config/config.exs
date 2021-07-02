@@ -2,7 +2,9 @@ import Config
 
 config :follower_maze, :clients, port: 9099
 
-config :follower_maze, :events, port: 9090
+config :follower_maze, :server, port: 9090
+
+config :follower_maze, :queue, num_workers: 100000
 
 config :logger, :console,
   format: "[$level] $message $metadata\n",

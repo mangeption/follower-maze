@@ -6,6 +6,7 @@ defmodule FollowerMaze.Server do
   use GenServer
 
   alias FollowerMaze.Event
+  alias FollowerMaze.Queue
 
   def start_link(default) when is_list(default) do
     GenServer.start_link(__MODULE__, default, name: __MODULE__)
@@ -23,7 +24,8 @@ defmodule FollowerMaze.Server do
     {:ok,
      %{
        socket: socket,
-       next_seq: 1
+       next_seq: 1,
+       num_workers: opts[:num_workers]
      }}
   end
 
@@ -37,11 +39,12 @@ defmodule FollowerMaze.Server do
   @impl true
   def handle_info(
         {:tcp, socket, packet},
-        state
+        %{num_workers: num_workers} = state
       ) do
     event = Event.parse(String.trim(packet))
     # Logger.info(~s(#{event.seq} #{String.trim(packet)}))
-    :ok = GenServer.cast(FollowerMaze.Queue, {:event, event})
+    worker_id = rem(event.seq - 1, num_workers)
+    :ok = GenServer.cast(Queue.Worker.via_tuple(worker_id), {:event, event})
 
     {:noreply, state}
   end
